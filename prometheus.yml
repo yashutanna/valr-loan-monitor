@@ -1,0 +1,10 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'valr-loan-monitor'
+    static_configs:
+      - targets: ['loan-monitor:3000']
+    scrape_interval: 30s
+    scrape_timeout: 10s
