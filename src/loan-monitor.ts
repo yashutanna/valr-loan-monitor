@@ -2,7 +2,6 @@ import { TransactionDatabase } from './database';
 import {ValrClient, Transaction } from "valr-typescript-client";
 
 export interface LoanConfig {
-  maintenanceMarginRatio: number;
   principalSubaccount: string;
 }
 
@@ -39,7 +38,6 @@ export interface LoanMetrics {
   interestInZAR: Record<string, number>;
   effectiveAPRByLoan: Record<string, number>;
   currentMarginRatio: number;
-  isAboveMaintenanceMargin: boolean;
   interestPaymentCountByLoan: Record<string, number>;
   totalCollateralValueInZAR: number;
   totalLoanValueInZAR: number;
@@ -68,7 +66,6 @@ export class LoanMonitor {
       interestInZAR: {},
       effectiveAPRByLoan: {},
       currentMarginRatio: 0,
-      isAboveMaintenanceMargin: false,
       interestPaymentCountByLoan: {},
       totalCollateralValueInZAR: 0,
       totalLoanValueInZAR: 0,
@@ -234,12 +231,10 @@ export class LoanMonitor {
         ? totalLoanValueInZAR / totalCollateralValueInZAR
         : 0;
       this.metrics.currentMarginRatio = marginRatio;
-      // When marginRatio > maintenanceMarginRatio, position is dangerous
-      this.metrics.isAboveMaintenanceMargin = marginRatio > this.config.maintenanceMarginRatio;
 
       console.log(`Detected ${loans.length} loan(s): ${loans.map(l => `${l.amount.toFixed(8)} ${l.currency}`).join(', ')}`);
       console.log(`Detected ${collateral.length} collateral position(s): ${collateral.map(c => `${c.amount.toFixed(8)} ${c.currency}`).join(', ')}`);
-      console.log(`Margin ratio: ${marginRatio.toFixed(4)}, Above maintenance: ${this.metrics.isAboveMaintenanceMargin}`);
+      console.log(`Margin ratio: ${marginRatio.toFixed(4)}`);
 
       // Fetch new transactions incrementally
       await this.fetchAndStoreNewTransactions();

@@ -61,7 +61,6 @@ All metrics with `currency` label support multiple loans:
 - `valr_loan_total_value_zar` - Total value of all loans in ZAR
 - `valr_loan_total_collateral_value_zar` - Total collateral value in ZAR
 - `valr_loan_margin_ratio` - Current total collateral/loan ratio
-- `valr_loan_is_above_maintenance_margin` - Whether loans are safe (1) or at risk (0)
 - `valr_loan_hours_since_first_payment` - Time since first payment
 
 ### Account Standing Metrics
@@ -120,9 +119,6 @@ VALR_API_SECRET=your_api_secret_here
 
 # Subaccount ID (get this from VALR)
 LOAN_PRINCIPAL_SUBACCOUNT=1234567890123456789
-
-# Loan Configuration
-MAINTENANCE_MARGIN_RATIO=0.8
 
 # Monitoring Configuration
 POLL_INTERVAL_MS=3600000  # 1 hour
@@ -216,7 +212,6 @@ npm run dev
 | `VALR_API_KEY` | VALR API key | Yes | - |
 | `VALR_API_SECRET` | VALR API secret | Yes | - |
 | `LOAN_PRINCIPAL_SUBACCOUNT` | Subaccount ID with loans (negative balances) | Yes | - |
-| `MAINTENANCE_MARGIN_RATIO` | Minimum safe margin ratio | No | `0.8` |
 | `POLL_INTERVAL_MS` | Update interval in milliseconds | No | `3600000` |
 | `PORT` | HTTP server port | No | `3000` |
 
@@ -270,7 +265,6 @@ Returns current loan status, metrics, account standing, and prices
     "XRP": 19
   },
   "marginRatio": 0.6911,
-  "isAboveMaintenanceMargin": false,
   "hoursSinceFirstPayment": 1440,
   "accountStanding": {
     "marginFraction": 0.3373,

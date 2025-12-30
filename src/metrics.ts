@@ -10,7 +10,6 @@ export class MetricsExporter {
   private totalInterestZARGauge: Gauge;
   private effectiveAPRGauge: Gauge;
   private marginRatioGauge: Gauge;
-  private isAboveMaintenanceMarginGauge: Gauge;
   private hoursSinceFirstPaymentGauge: Gauge;
   private interestPaymentCountGauge: Gauge;
   private collateralAmountGauge: Gauge;
@@ -77,12 +76,6 @@ export class MetricsExporter {
     this.marginRatioGauge = new Gauge({
       name: 'valr_loan_margin_ratio',
       help: 'Current margin ratio (total loan value / total collateral value in ZAR). Higher = more dangerous.',
-      registers: [this.register],
-    });
-
-    this.isAboveMaintenanceMarginGauge = new Gauge({
-      name: 'valr_loan_is_above_maintenance_margin',
-      help: 'Whether the loan is above maintenance margin threshold (1 = dangerous, 0 = safe)',
       registers: [this.register],
     });
 
@@ -248,7 +241,6 @@ export class MetricsExporter {
 
     // Update aggregate metrics
     this.marginRatioGauge.set(metrics.currentMarginRatio);
-    this.isAboveMaintenanceMarginGauge.set(metrics.isAboveMaintenanceMargin ? 1 : 0);
     this.hoursSinceFirstPaymentGauge.set(metrics.hoursSinceFirstPayment);
     this.totalLoanValueZARGauge.set(metrics.totalLoanValueInZAR);
     this.totalCollateralValueZARGauge.set(metrics.totalCollateralValueInZAR);

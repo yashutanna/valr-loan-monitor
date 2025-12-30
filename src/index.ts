@@ -10,7 +10,6 @@ const PORT = parseInt(process.env.PORT || '3000', 10);
 const POLL_INTERVAL_MS = parseInt(process.env.POLL_INTERVAL_MS || '3600000', 10);
 
 const config: LoanConfig = {
-  maintenanceMarginRatio: parseFloat(process.env.MAINTENANCE_MARGIN_RATIO || '1.3'),
   principalSubaccount: process.env.LOAN_PRINCIPAL_SUBACCOUNT || '',
 };
 
@@ -51,7 +50,6 @@ async function main() {
   console.log('VALR Loan Monitor');
   console.log('='.repeat(60));
   console.log('Configuration:');
-  console.log(`  - Maintenance margin ratio: ${config.maintenanceMarginRatio}`);
   console.log(`  - Principal subaccount: ${config.principalSubaccount}`);
   console.log(`  - Poll interval: ${POLL_INTERVAL_MS / 1000}s`);
   console.log(`  - Loans (negative balances) and collateral (positive balances) auto-detected`);
@@ -94,8 +92,6 @@ async function main() {
       effectiveAPRByLoan: currentMetrics.effectiveAPRByLoan,
       interestPaymentCountByLoan: currentMetrics.interestPaymentCountByLoan,
       marginRatio: currentMetrics.currentMarginRatio,
-      isAboveMaintenanceMargin: currentMetrics.isAboveMaintenanceMargin,
-      maintenanceMarginRatio: config.maintenanceMarginRatio,
       hoursSinceFirstPayment: currentMetrics.hoursSinceFirstPayment,
       accountStanding: currentMetrics.accountStanding,
       prices: currentMetrics.prices,
