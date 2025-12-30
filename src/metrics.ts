@@ -34,6 +34,10 @@ export class MetricsExporter {
   private priceGauge: Gauge;
   private priceInZARGauge: Gauge;
 
+  // Disk usage gauges
+  private diskUsageTotalGauge: Gauge;
+  private diskUsageByComponentGauge: Gauge;
+
   constructor(loanMonitor: LoanMonitor) {
     this.register = new Registry();
     this.loanMonitor = loanMonitor;
@@ -191,6 +195,19 @@ export class MetricsExporter {
       labelNames: ['currency'],
       registers: [this.register],
     });
+
+    this.diskUsageTotalGauge = new Gauge({
+      name: 'valr_disk_usage_bytes',
+      help: 'Total disk usage by the application in bytes',
+      registers: [this.register],
+    });
+
+    this.diskUsageByComponentGauge = new Gauge({
+      name: 'valr_disk_usage_by_component_bytes',
+      help: 'Disk usage by component (database, prometheus, grafana) in bytes',
+      labelNames: ['component'],
+      registers: [this.register],
+    });
   }
 
   updateMetrics(): void {
@@ -277,6 +294,15 @@ export class MetricsExporter {
 
   incrementUpdateErrorCounter(): void {
     this.updateErrorCounter.inc();
+  }
+
+  updateDiskUsage(totalBytes: number, breakdown: Record<string, number>): void {
+    this.diskUsageTotalGauge.set(totalBytes);
+
+    this.diskUsageByComponentGauge.reset();
+    for (const [component, bytes] of Object.entries(breakdown)) {
+      this.diskUsageByComponentGauge.set({ component }, bytes);
+    }
   }
 
   async getMetrics(): Promise<string> {

@@ -132,8 +132,7 @@ export class LoanMonitor {
             prices[currency] = parseFloat(summary.lastTradedPrice);
           } catch (error) {
             console.error(`Error fetching price for ${currency}USDC:`, (error as Error).message);
-            // If USDC pair doesn't exist, try to calculate via other pairs
-            prices[currency] = 0;
+            // Skip this currency - don't set to 0, leave it undefined so Grafana treats it as missing data
           }
         }
       }
@@ -150,7 +149,7 @@ export class LoanMonitor {
             pricesInZAR[currency] = parseFloat(summary.lastTradedPrice);
           } catch (error) {
             console.error(`Error fetching price for ${currency}ZAR:`, (error as Error).message);
-            pricesInZAR[currency] = 0;
+            // Skip this currency - don't set to 0, leave it undefined so Grafana treats it as missing data
           }
         }
       }

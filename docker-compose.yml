@@ -9,6 +9,8 @@ services:
       - "3030:3000"
     env_file:
       - .env
+    volumes:
+      - ./volumes:/volumes:ro
     networks:
       - monitoring
     depends_on:

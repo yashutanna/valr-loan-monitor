@@ -2,7 +2,9 @@ import express from 'express';
 import dotenv from 'dotenv';
 import { LoanMonitor, LoanConfig } from './loan-monitor';
 import { MetricsExporter } from './metrics';
-import { ValrClient } from 'valr-typescript-client'
+import { ValrClient } from 'valr-typescript-client';
+import fs from 'fs';
+import path from 'path';
 
 dotenv.config();
 
@@ -27,16 +29,68 @@ function validateConfig(config: LoanConfig): void {
   }
 }
 
+function getDirectorySize(dirPath: string): number {
+  let totalSize = 0;
+
+  try {
+    if (!fs.existsSync(dirPath)) {
+      return 0;
+    }
+
+    const items = fs.readdirSync(dirPath);
+
+    for (const item of items) {
+      const itemPath = path.join(dirPath, item);
+      const stats = fs.statSync(itemPath);
+
+      if (stats.isDirectory()) {
+        totalSize += getDirectorySize(itemPath);
+      } else {
+        totalSize += stats.size;
+      }
+    }
+  } catch (error) {
+    console.error(`Error calculating size for ${dirPath}:`, (error as Error).message);
+  }
+
+  return totalSize;
+}
+
+function calculateDiskUsage(): { totalBytes: number; breakdown: Record<string, number> } {
+  const breakdown: Record<string, number> = {};
+
+  // SQLite database
+  const dbPath = path.join('/app', 'data', 'loans.db');
+  breakdown.database = fs.existsSync(dbPath) ? fs.statSync(dbPath).size : 0;
+
+  // Prometheus data volume
+  const prometheusPath = '/volumes/prometheus';
+  breakdown.prometheus = getDirectorySize(prometheusPath);
+
+  // Grafana data volume
+  const grafanaPath = '/volumes/grafana';
+  breakdown.grafana = getDirectorySize(grafanaPath);
+
+  const totalBytes = Object.values(breakdown).reduce((sum, size) => sum + size, 0);
+
+  return { totalBytes, breakdown };
+}
+
 async function updateData(monitor: LoanMonitor, metrics: MetricsExporter): Promise<void> {
   try {
     console.log(`[${new Date().toISOString()}] Updating metrics...`);
 
     await monitor.updateMetrics();
+
+    // Calculate disk usage
+    const diskUsage = calculateDiskUsage();
+    metrics.updateDiskUsage(diskUsage.totalBytes, diskUsage.breakdown);
+
     metrics.updateMetrics();
     metrics.incrementUpdateCounter();
 
     const currentMetrics = monitor.getMetrics();
-    console.log(`[${new Date().toISOString()}] Update complete`);
+    console.log(`[${new Date().toISOString()}] Update complete. Disk usage: ${(diskUsage.totalBytes / 1024 / 1024).toFixed(2)} MB`);
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Update error:`, error);
     metrics.incrementUpdateErrorCounter();
