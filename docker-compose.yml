@@ -20,6 +20,7 @@ services:
     image: prom/prometheus:v3.8.0
     container_name: prometheus
     restart: unless-stopped
+    user: "0:0"
     ports:
       - "9090:9090"
     volumes:
@@ -37,11 +38,14 @@ services:
     image: grafana/grafana:12.1.1
     container_name: grafana
     restart: unless-stopped
+    user: "0:0"
     ports:
       - "3031:3000"
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
       - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
+      - GF_INSTALL_PLUGINS=
     volumes:
       - ./volumes/grafana:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
