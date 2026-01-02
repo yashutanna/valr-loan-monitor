@@ -101,6 +101,60 @@ export class TransactionDatabase {
     return result.count;
   }
 
+  getInterestTransactionsSince(sinceDate: string): Omit<Transaction, 'feeCurrency' | 'feeValue'>[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM transactions
+      WHERE (transaction_type LIKE '%INTEREST%' OR transaction_type LIKE '%BORROW%')
+        AND event_at >= ?
+      ORDER BY event_at ASC
+    `).all(sinceDate) as any[];
+
+    return rows.map(row => ({
+      id: row.id,
+      transactionType: {
+        type: row.transaction_type,
+        description: row.transaction_description || ''
+      },
+      debitCurrency: row.debit_currency || undefined,
+      debitValue: row.debit_value || undefined,
+      creditCurrency: row.credit_currency || undefined,
+      creditValue: row.credit_value || undefined,
+      eventAt: row.event_at,
+      additionalInfo: row.additional_info ? JSON.parse(row.additional_info) : undefined
+    }));
+  }
+
+  getAllPaymentTransactions(ignoreTransferIds?: string[]): Omit<Transaction, 'feeCurrency' | 'feeValue'>[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM transactions
+      WHERE transaction_type = 'INTERNAL_TRANSFER' AND credit_currency IS NOT NULL
+      ORDER BY event_at ASC
+    `).all() as any[];
+
+    return rows
+      .map(row => ({
+        id: row.id,
+        transactionType: {
+          type: row.transaction_type,
+          description: row.transaction_description || ''
+        },
+        debitCurrency: row.debit_currency || undefined,
+        debitValue: row.debit_value || undefined,
+        creditCurrency: row.credit_currency || undefined,
+        creditValue: row.credit_value || undefined,
+        eventAt: row.event_at,
+        additionalInfo: row.additional_info ? JSON.parse(row.additional_info) : undefined
+      }))
+      .filter(tx => {
+        // Filter out transactions with transfer IDs in the ignore list
+        if (!ignoreTransferIds || ignoreTransferIds.length === 0) {
+          return true;
+        }
+        const transferId = tx.additionalInfo?.transferId;
+        return !transferId || !ignoreTransferIds.includes(transferId);
+      });
+  }
+
   close(): void {
     this.db.close();
   }

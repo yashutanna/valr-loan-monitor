@@ -38,6 +38,14 @@ export class MetricsExporter {
   private diskUsageTotalGauge: Gauge;
   private diskUsageByComponentGauge: Gauge;
 
+  // Monthly interest gauges
+  private monthlyAccumulatedInterestGauge: Gauge;
+  private monthlyAccumulatedInterestZARGauge: Gauge;
+
+  // Payment gauges
+  private totalPaymentsGauge: Gauge;
+  private totalPaymentsZARGauge: Gauge;
+
   constructor(loanMonitor: LoanMonitor) {
     this.register = new Registry();
     this.loanMonitor = loanMonitor;
@@ -208,6 +216,34 @@ export class MetricsExporter {
       labelNames: ['component'],
       registers: [this.register],
     });
+
+    this.monthlyAccumulatedInterestGauge = new Gauge({
+      name: 'valr_monthly_accumulated_interest',
+      help: 'Interest accumulated this month (resets on 1st) by currency',
+      labelNames: ['currency'],
+      registers: [this.register],
+    });
+
+    this.monthlyAccumulatedInterestZARGauge = new Gauge({
+      name: 'valr_monthly_accumulated_interest_zar',
+      help: 'Interest accumulated this month in ZAR (resets on 1st) by currency',
+      labelNames: ['currency'],
+      registers: [this.register],
+    });
+
+    this.totalPaymentsGauge = new Gauge({
+      name: 'valr_total_payments',
+      help: 'Total payments (deposits) made to the account by currency',
+      labelNames: ['currency'],
+      registers: [this.register],
+    });
+
+    this.totalPaymentsZARGauge = new Gauge({
+      name: 'valr_total_payments_zar',
+      help: 'Total payments (deposits) made to the account in ZAR by currency',
+      labelNames: ['currency'],
+      registers: [this.register],
+    });
   }
 
   updateMetrics(): void {
@@ -285,6 +321,26 @@ export class MetricsExporter {
     this.priceInZARGauge.reset();
     for (const [currency, price] of Object.entries(metrics.pricesInZAR)) {
       this.priceInZARGauge.set({ currency }, price);
+    }
+
+    // Update monthly accumulated interest metrics
+    this.monthlyAccumulatedInterestGauge.reset();
+    this.monthlyAccumulatedInterestZARGauge.reset();
+    for (const [currency, amount] of Object.entries(metrics.monthlyAccumulatedInterest)) {
+      this.monthlyAccumulatedInterestGauge.set({ currency }, amount);
+    }
+    for (const [currency, amount] of Object.entries(metrics.monthlyAccumulatedInterestInZAR)) {
+      this.monthlyAccumulatedInterestZARGauge.set({ currency }, amount);
+    }
+
+    // Update payment metrics
+    this.totalPaymentsGauge.reset();
+    this.totalPaymentsZARGauge.reset();
+    for (const [currency, amount] of Object.entries(metrics.totalPaymentsByCurrency)) {
+      this.totalPaymentsGauge.set({ currency }, amount);
+    }
+    for (const [currency, amount] of Object.entries(metrics.totalPaymentsInZAR)) {
+      this.totalPaymentsZARGauge.set({ currency }, amount);
     }
   }
 

@@ -3,6 +3,7 @@ import {ValrClient, Transaction } from "valr-typescript-client";
 
 export interface LoanConfig {
   principalSubaccount: string;
+  paymentIgnoreTransferIds?: string[];
 }
 
 export interface LoanPosition {
@@ -45,6 +46,11 @@ export interface LoanMetrics {
   accountStanding?: AccountStanding;
   prices: Record<string, number>;
   pricesInZAR: Record<string, number>;
+  monthlyAccumulatedInterest: Record<string, number>;
+  monthlyAccumulatedInterestInZAR: Record<string, number>;
+  currentMonthStart: string;
+  totalPaymentsByCurrency: Record<string, number>;
+  totalPaymentsInZAR: Record<string, number>;
 }
 
 export class LoanMonitor {
@@ -59,6 +65,9 @@ export class LoanMonitor {
     this.valrClient = valrClient;
     this.db = new TransactionDatabase(dbPath);
     this.valrClient.setSubaccountId(this.config.principalSubaccount);
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
     this.metrics = {
       loans: [],
       collateral: [],
@@ -72,6 +81,11 @@ export class LoanMonitor {
       hoursSinceFirstPayment: 0,
       prices: {},
       pricesInZAR: {},
+      monthlyAccumulatedInterest: {},
+      monthlyAccumulatedInterestInZAR: {},
+      currentMonthStart: monthStart.toISOString(),
+      totalPaymentsByCurrency: {},
+      totalPaymentsInZAR: {},
     };
   }
 
@@ -314,9 +328,101 @@ export class LoanMonitor {
       } else {
         console.log('No interest payments found in transaction history');
       }
+
+      // Calculate monthly accumulated interest
+      await this.calculateMonthlyAccumulatedInterest(exchangeRates);
+
+      // Calculate total payments
+      await this.calculatePayments(exchangeRates);
     } catch (error) {
       console.error('Error detecting loans and calculating interest:', (error as Error).message);
       throw error;
+    }
+  }
+
+  private async calculateMonthlyAccumulatedInterest(exchangeRates: Record<string, number>): Promise<void> {
+    const now = new Date();
+    const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const currentMonthStartISO = currentMonthStart.toISOString();
+
+    // Check if we're in a new month - reset if needed
+    const storedMonthStart = new Date(this.metrics.currentMonthStart);
+    if (storedMonthStart.getMonth() !== currentMonthStart.getMonth() ||
+        storedMonthStart.getFullYear() !== currentMonthStart.getFullYear()) {
+      console.log(`New month detected! Resetting monthly accumulated interest (was ${this.metrics.currentMonthStart}, now ${currentMonthStartISO})`);
+      this.metrics.currentMonthStart = currentMonthStartISO;
+      this.metrics.monthlyAccumulatedInterest = {};
+      this.metrics.monthlyAccumulatedInterestInZAR = {};
+    }
+
+    // Get all interest transactions since start of current month
+    const monthlyInterestTransactions = this.db.getInterestTransactionsSince(currentMonthStartISO);
+
+    const monthlyInterest: Record<string, number> = {};
+    const monthlyInterestInZAR: Record<string, number> = {};
+
+    for (const tx of monthlyInterestTransactions) {
+      if (tx.debitValue && tx.debitCurrency) {
+        const amount = Math.abs(parseFloat(tx.debitValue));
+        const currency = tx.debitCurrency;
+
+        monthlyInterest[currency] = (monthlyInterest[currency] || 0) + amount;
+      }
+    }
+
+    // Convert to ZAR
+    for (const [currency, amount] of Object.entries(monthlyInterest)) {
+      if (!exchangeRates[currency]) {
+        exchangeRates[currency] = currency === 'ZAR' ? 1 : (await this.convertCurrencyToZAR(1, currency));
+      }
+      monthlyInterestInZAR[currency] = amount * exchangeRates[currency];
+    }
+
+    this.metrics.monthlyAccumulatedInterest = monthlyInterest;
+    this.metrics.monthlyAccumulatedInterestInZAR = monthlyInterestInZAR;
+
+    if (Object.keys(monthlyInterest).length > 0) {
+      console.log(`Monthly interest (since ${currentMonthStart.toLocaleDateString()}): ${Object.entries(monthlyInterest).map(([curr, amt]) => `${amt.toFixed(8)} ${curr}`).join(', ')}`);
+    } else {
+      console.log(`No interest accumulated this month (since ${currentMonthStart.toLocaleDateString()})`);
+    }
+  }
+
+  private async calculatePayments(exchangeRates: Record<string, number>): Promise<void> {
+    // Get payment transactions, excluding those with transfer IDs in the ignore list
+    // (e.g., initial collateral deposits before borrowing started)
+    const ignoreTransferIds = this.config.paymentIgnoreTransferIds;
+    const paymentTransactions = this.db.getAllPaymentTransactions(ignoreTransferIds);
+
+    const totalPayments: Record<string, number> = {};
+    const totalPaymentsInZAR: Record<string, number> = {};
+
+    for (const tx of paymentTransactions) {
+      if (tx.creditValue && tx.creditCurrency) {
+        const amount = parseFloat(tx.creditValue);
+        const currency = tx.creditCurrency;
+
+        totalPayments[currency] = (totalPayments[currency] || 0) + amount;
+      }
+    }
+
+    // Convert to ZAR
+    for (const [currency, amount] of Object.entries(totalPayments)) {
+      if (!exchangeRates[currency]) {
+        exchangeRates[currency] = currency === 'ZAR' ? 1 : (await this.convertCurrencyToZAR(1, currency));
+      }
+      totalPaymentsInZAR[currency] = amount * exchangeRates[currency];
+    }
+
+    this.metrics.totalPaymentsByCurrency = totalPayments;
+    this.metrics.totalPaymentsInZAR = totalPaymentsInZAR;
+
+    if (Object.keys(totalPayments).length > 0) {
+      const totalInZAR = Object.values(totalPaymentsInZAR).reduce((sum, val) => sum + val, 0);
+      const ignoredCount = ignoreTransferIds?.length || 0;
+      console.log(`Total payments: ${Object.entries(totalPayments).map(([curr, amt]) => `${amt.toFixed(8)} ${curr}`).join(', ')} (Total: R${totalInZAR.toFixed(2)}, ${ignoredCount} transfer(s) ignored)`);
+    } else {
+      console.log('No payment transactions found');
     }
   }
 
@@ -399,6 +505,10 @@ export class LoanMonitor {
       collateral: [...this.metrics.collateral],
       prices: { ...this.metrics.prices },
       pricesInZAR: { ...this.metrics.pricesInZAR },
+      monthlyAccumulatedInterest: { ...this.metrics.monthlyAccumulatedInterest },
+      monthlyAccumulatedInterestInZAR: { ...this.metrics.monthlyAccumulatedInterestInZAR },
+      totalPaymentsByCurrency: { ...this.metrics.totalPaymentsByCurrency },
+      totalPaymentsInZAR: { ...this.metrics.totalPaymentsInZAR },
     };
   }
 

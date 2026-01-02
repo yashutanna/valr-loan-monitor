@@ -11,8 +11,14 @@ dotenv.config();
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const POLL_INTERVAL_MS = parseInt(process.env.POLL_INTERVAL_MS || '3600000', 10);
 
+// Parse comma-separated transfer IDs to ignore for payment calculations
+const paymentIgnoreTransferIds = process.env.PAYMENT_IGNORE_TRANSFER_IDS
+  ? process.env.PAYMENT_IGNORE_TRANSFER_IDS.split(',').map(id => id.trim()).filter(id => id.length > 0)
+  : undefined;
+
 const config: LoanConfig = {
   principalSubaccount: process.env.LOAN_PRINCIPAL_SUBACCOUNT || '',
+  paymentIgnoreTransferIds,
 };
 
 function validateConfig(config: LoanConfig): void {
@@ -107,6 +113,9 @@ async function main() {
   console.log(`  - Principal subaccount: ${config.principalSubaccount}`);
   console.log(`  - Poll interval: ${POLL_INTERVAL_MS / 1000}s`);
   console.log(`  - Loans (negative balances) and collateral (positive balances) auto-detected`);
+  if (config.paymentIgnoreTransferIds && config.paymentIgnoreTransferIds.length > 0) {
+    console.log(`  - Payment tracking: Ignoring ${config.paymentIgnoreTransferIds.length} transfer ID(s)`);
+  }
   console.log('='.repeat(60));
 
   const valrClient = new ValrClient({
@@ -150,6 +159,11 @@ async function main() {
       accountStanding: currentMetrics.accountStanding,
       prices: currentMetrics.prices,
       pricesInZAR: currentMetrics.pricesInZAR,
+      monthlyAccumulatedInterest: currentMetrics.monthlyAccumulatedInterest,
+      monthlyAccumulatedInterestInZAR: currentMetrics.monthlyAccumulatedInterestInZAR,
+      currentMonthStart: currentMetrics.currentMonthStart,
+      totalPaymentsByCurrency: currentMetrics.totalPaymentsByCurrency,
+      totalPaymentsInZAR: currentMetrics.totalPaymentsInZAR,
     });
   });
 
