@@ -207,7 +207,7 @@ export class FriendsFamilyLoanManager {
   /**
    * Record a payment in the database
    */
-  recordPayment(payment: FFLoanPayment, dryRun: boolean): void {
+  recordPayment(payment: FFLoanPayment): void {
     this.db.recordFFPayment({
       loanId: payment.loanId,
       paymentDate: payment.paymentDate,
@@ -215,8 +215,7 @@ export class FriendsFamilyLoanManager {
       cryptoCurrency: payment.cryptoCurrency,
       cryptoAmount: payment.cryptoAmount,
       transferId: payment.transferId,
-      paymentType: payment.type,
-      dryRun
+      paymentType: payment.type
     });
   }
 

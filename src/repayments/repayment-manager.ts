@@ -109,19 +109,20 @@ export class RepaymentManager {
         console.log(`\nSkipping repayment cycle: ${plan.skippedReason}`);
         console.log('='.repeat(80));
 
-        // Record the skip
-        const executionId = this.db.recordRepaymentExecution({
-          executionDate: result.timestamp,
-          dryRun: this.config.dryRun,
-          actionsPlanned: result.actionsPlanned,
-          actionsExecuted: 0,
-          totalZARSpent: 0,
-          ffPaymentsCount: 0,
-          valrPaymentsCount: 0,
-          success: true,
-          errors: [plan.skippedReason || 'Skipped'],
-          executionDetails: plan
-        });
+        // Record the skip (only for real executions, not dry runs)
+        if (!this.config.dryRun) {
+          this.db.recordRepaymentExecution({
+            executionDate: result.timestamp,
+            actionsPlanned: result.actionsPlanned,
+            actionsExecuted: 0,
+            totalZARSpent: 0,
+            ffPaymentsCount: 0,
+            valrPaymentsCount: 0,
+            success: true,
+            errors: [plan.skippedReason || 'Skipped'],
+            executionDetails: plan
+          });
+        }
 
         return result;
       }
@@ -270,19 +271,13 @@ export class RepaymentManager {
       }
     };
 
-    // Record execution start
-    const executionId = this.db.recordRepaymentExecution({
-      executionDate: result.timestamp,
-      dryRun: this.config.dryRun,
-      actionsPlanned: plan.payments.length,
-      actionsExecuted: 0,
-      totalZARSpent: 0,
-      ffPaymentsCount: 0,
-      valrPaymentsCount: 0,
-      success: false, // Will update at end
-      errors: [],
-      executionDetails: plan
-    });
+    // Collect VALR repayment data to record after execution
+    const valrRepayments: Array<{
+      currency: string;
+      amount: number;
+      amountZAR: number;
+      transferId?: string;
+    }> = [];
 
     console.log(`\n${'─'.repeat(80)}`);
     console.log('Executing Payments');
@@ -294,10 +289,13 @@ export class RepaymentManager {
         console.log(`  Amount: R${action.amountInZAR.toFixed(2)}`);
 
         if (action.type === 'FRIENDS_FAMILY') {
-          await this.payFriendsFamily(action, executionId);
+          await this.payFriendsFamily(action);
           result.breakdown.friendsFamilyPayments++;
         } else {
-          await this.payVALRLoan(action, executionId);
+          const valrRepaymentData = await this.payVALRLoan(action);
+          if (valrRepaymentData) {
+            valrRepayments.push(valrRepaymentData);
+          }
           result.breakdown.valrLoanPayments++;
         }
 
@@ -315,19 +313,28 @@ export class RepaymentManager {
       }
     }
 
-    // Update execution record
-    this.db.recordRepaymentExecution({
-      executionDate: result.timestamp,
-      dryRun: this.config.dryRun,
-      actionsPlanned: result.actionsPlanned,
-      actionsExecuted: result.actionsExecuted,
-      totalZARSpent: result.totalZARSpent,
-      ffPaymentsCount: result.breakdown.friendsFamilyPayments,
-      valrPaymentsCount: result.breakdown.valrLoanPayments,
-      success: result.success,
-      errors: result.errors,
-      executionDetails: { plan, result }
-    });
+    // Record execution (only for real executions, not dry runs)
+    if (!this.config.dryRun) {
+      const executionId = this.db.recordRepaymentExecution({
+        executionDate: result.timestamp,
+        actionsPlanned: result.actionsPlanned,
+        actionsExecuted: result.actionsExecuted,
+        totalZARSpent: result.totalZARSpent,
+        ffPaymentsCount: result.breakdown.friendsFamilyPayments,
+        valrPaymentsCount: result.breakdown.valrLoanPayments,
+        success: result.success,
+        errors: result.errors,
+        executionDetails: { plan, result }
+      });
+
+      // Record all VALR loan repayments with the execution ID
+      for (const valrRepayment of valrRepayments) {
+        this.db.recordVALRRepayment({
+          executionId,
+          ...valrRepayment
+        });
+      }
+    }
 
     return result;
   }
@@ -335,7 +342,7 @@ export class RepaymentManager {
   /**
    * Pay Friends & Family loan
    */
-  private async payFriendsFamily(action: RepaymentAction, executionId: number): Promise<void> {
+  private async payFriendsFamily(action: RepaymentAction): Promise<void> {
     const loan = this.ffLoanManager.getLoan(action.loanIdentifier);
     if (!loan) throw new Error(`Loan not found: ${action.loanIdentifier}`);
 
@@ -366,22 +373,29 @@ export class RepaymentManager {
 
     console.log(`  Transfer ID: ${transferResult.transferId}`);
 
-    // 3. Record payment
-    this.ffLoanManager.recordPayment({
-      loanId: loan.id,
-      paymentDate: new Date().toISOString(),
-      amountZAR: tradeResult.zarSpent,
-      cryptoCurrency: action.currency,
-      cryptoAmount: tradeResult.cryptoReceived,
-      transferId: transferResult.transferId,
-      type: 'INTEREST'
-    }, this.config.dryRun);
+    // 3. Record payment (only for real executions, not dry runs)
+    if (!this.config.dryRun) {
+      this.ffLoanManager.recordPayment({
+        loanId: loan.id,
+        paymentDate: new Date().toISOString(),
+        amountZAR: tradeResult.zarSpent,
+        cryptoCurrency: action.currency,
+        cryptoAmount: tradeResult.cryptoReceived,
+        transferId: transferResult.transferId,
+        type: 'INTEREST'
+      });
+    }
   }
 
   /**
-   * Pay VALR loan
+   * Pay VALR loan - returns repayment data for recording (only for non-dry-run executions)
    */
-  private async payVALRLoan(action: RepaymentAction, executionId: number): Promise<void> {
+  private async payVALRLoan(action: RepaymentAction): Promise<{
+    currency: string;
+    amount: number;
+    amountZAR: number;
+    transferId?: string;
+  } | null> {
     // 1. Buy loan currency with ZAR
     console.log(`  Buying ${action.currency}...`);
     const tradeResult = await this.tradingService.buyWithZAR(action.currency, action.amountInZAR);
@@ -407,15 +421,17 @@ export class RepaymentManager {
 
     console.log(`  Transfer ID: ${transferResult.transferId}`);
 
-    // 3. Record repayment
-    this.db.recordVALRRepayment({
-      executionId,
-      currency: action.currency,
-      amount: tradeResult.cryptoReceived,
-      amountZAR: tradeResult.zarSpent,
-      transferId: transferResult.transferId,
-      dryRun: this.config.dryRun
-    });
+    // 3. Return repayment data for recording (only for real executions)
+    if (!this.config.dryRun) {
+      return {
+        currency: action.currency,
+        amount: tradeResult.cryptoReceived,
+        amountZAR: tradeResult.zarSpent,
+        transferId: transferResult.transferId
+      };
+    }
+
+    return null;
   }
 
   /**

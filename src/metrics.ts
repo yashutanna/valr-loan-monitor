@@ -1,5 +1,6 @@
 import { Registry, Gauge, Counter } from 'prom-client';
 import { LoanMonitor } from './loan-monitor';
+import { maskName } from './utils/sanitization';
 
 export class MetricsExporter {
   private register: Registry;
@@ -519,7 +520,7 @@ export class MetricsExporter {
     this.ffLoanDaysSinceLastPayment.reset();
 
     for (const summary of ffSummaries) {
-      const labels = { loan_id: summary.loan.id, name: summary.loan.name };
+      const labels = { loan_id: summary.loan.id, name: maskName(summary.loan.name) };
       this.ffLoanInterestPaidByLoan.set(labels, summary.totalInterestPaid);
       this.ffLoanDaysSinceLastPayment.set(labels, summary.daysSinceLastPayment);
     }

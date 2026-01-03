@@ -1,5 +1,6 @@
 import { TransactionDatabase } from './database';
 import {ValrClient, Transaction } from "valr-typescript-client";
+import { TransactionFetcher } from './transaction-fetcher';
 
 export interface LoanConfig {
   principalSubaccount: string;
@@ -59,12 +60,18 @@ export class LoanMonitor {
   private metrics: LoanMetrics;
   private firstPaymentTimestamp?: Date;
   private db: TransactionDatabase;
+  private transactionFetcher: TransactionFetcher;
 
   constructor(valrClient: ValrClient, config: LoanConfig, dbPath?: string) {
     this.config = config;
     this.valrClient = valrClient;
     this.db = new TransactionDatabase(dbPath);
     this.valrClient.setSubaccountId(this.config.principalSubaccount);
+    this.transactionFetcher = new TransactionFetcher(
+      valrClient,
+      this.db,
+      config.principalSubaccount
+    );
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
@@ -97,7 +104,7 @@ export class LoanMonitor {
 
   private async getAccountStanding(): Promise<void> {
     try {
-      const marginStatus = await (this.valrClient as any).margin.getMarginStatus();
+      const marginStatus = await this.valrClient.margin.getMarginInfo();
 
       this.metrics.accountStanding = {
         marginFraction: parseFloat(marginStatus.marginFraction),
@@ -109,7 +116,7 @@ export class LoanMonitor {
         collateralisedBalancesInReference: parseFloat(marginStatus.collateralisedBalancesInReference),
         availableInReference: parseFloat(marginStatus.availableInReference),
         referenceCurrency: marginStatus.referenceCurrency,
-        leverageMultiple: parseFloat(marginStatus.leverageMultiple),
+        leverageMultiple: parseFloat(marginStatus.leverageMultiple.toString()),
         totalPositionsAtEntryInReference: parseFloat(marginStatus.totalPositionsAtEntryInReference || '0'),
         totalUnrealisedFuturesPnlInReference: parseFloat(marginStatus.totalUnrealisedFuturesPnlInReference || '0')
       };
@@ -250,7 +257,7 @@ export class LoanMonitor {
       console.log(`Margin ratio: ${marginRatio.toFixed(4)}`);
 
       // Fetch new transactions incrementally
-      await this.fetchAndStoreNewTransactions();
+      await this.transactionFetcher.fetchAndStoreNewTransactions();
 
       console.log(`Total transactions in DB: ${this.db.getTransactionCount()}, Interest transactions: ${this.db.getInterestTransactionCount()}`);
 
@@ -424,74 +431,6 @@ export class LoanMonitor {
     } else {
       console.log('No payment transactions found');
     }
-  }
-
-  private async fetchAndStoreNewTransactions(): Promise<void> {
-    const latestDate = this.db.getLatestTransactionDate();
-
-    if (latestDate) {
-      console.log(`Fetching transactions newer than ${latestDate}`);
-      // Fetch only new transactions
-      await this.fetchTransactionsWithPagination(latestDate);
-    } else {
-      console.log('No existing transactions, fetching all historical data...');
-      // First run - fetch all transactions
-      await this.fetchTransactionsWithPagination();
-    }
-  }
-
-  private async fetchTransactionsWithPagination(startTime?: string): Promise<void> {
-    const limit = 200; // VALR API max
-    let skip = 0;
-    let totalFetched = 0;
-    let newTransactionsStored = 0;
-    let hasMore = true;
-
-    while (hasMore) {
-      const transactions = await this.valrClient.account.getTransactionHistory( {
-          skip,
-          limit,
-          startTime
-      });
-
-      if (transactions.length === 0) {
-        hasMore = false;
-        break;
-      }
-
-      // Filter transactions newer than sinceDate if provided
-      let filteredTransactions = transactions;
-      if (startTime) {
-        filteredTransactions = transactions.filter(tx => (new Date(tx.eventAt)).getTime() >= (new Date(startTime)).getTime());
-
-        // If we found transactions older than sinceDate, we've reached our limit
-        if (filteredTransactions.length < transactions.length) {
-          hasMore = false;
-        }
-      }
-
-      if (filteredTransactions.length > 0) {
-        const stored = this.db.storeTransactions(filteredTransactions);
-        newTransactionsStored += stored;
-      }
-
-      totalFetched += transactions.length;
-
-      // If we got less than limit, no more transactions available
-      if (transactions.length < limit) {
-        hasMore = false;
-      }
-
-      skip += limit;
-
-      // Safety limit: don't fetch more than 10,000 transactions in one go
-      if (skip >= 10000) {
-        console.log('Reached safety limit of 10,000 transactions');
-        hasMore = false;
-      }
-    }
-
-    console.log(`Fetched ${totalFetched} transactions, stored ${newTransactionsStored} new ones`);
   }
 
   getMetrics(): LoanMetrics {

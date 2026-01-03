@@ -8,8 +8,10 @@ services:
     ports:
       - "3030:3000"
     env_file:
-      - .env
+      - .env.docker
     volumes:
+      - ./data:/app/data
+      - ./config:/app/config:ro
       - ./volumes:/volumes:ro
     networks:
       - monitoring

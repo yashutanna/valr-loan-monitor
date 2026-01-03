@@ -5,7 +5,9 @@ import { MetricsExporter } from './metrics';
 import { ValrClient } from 'valr-typescript-client';
 import { RepaymentManager, RepaymentConfig } from './repayments/repayment-manager';
 import { FriendsFamilyLoanManager } from './repayments/friends-family-loans';
+import { RepaymentMonitor, RepaymentMonitorConfig } from './repayment-monitor';
 import { TransactionDatabase } from './database';
+import { sanitizeFFLoanSummaries } from './utils/sanitization';
 import fs from 'fs';
 import path from 'path';
 
@@ -100,11 +102,16 @@ function calculateDiskUsage(dbPath: string): { totalBytes: number; breakdown: Re
   return { totalBytes, breakdown };
 }
 
-async function updateData(monitor: LoanMonitor, metrics: MetricsExporter, dbPath: string, repaymentManager?: RepaymentManager): Promise<void> {
+async function updateData(monitor: LoanMonitor, metrics: MetricsExporter, dbPath: string, repaymentManager?: RepaymentManager, repaymentMonitor?: RepaymentMonitor): Promise<void> {
   try {
     console.log(`[${new Date().toISOString()}] Updating metrics...`);
 
     await monitor.updateMetrics();
+
+    // Fetch repayment subaccount transactions if enabled
+    if (repaymentMonitor) {
+      await repaymentMonitor.updateMetrics();
+    }
 
     // Calculate disk usage
     const diskUsage = calculateDiskUsage(dbPath);
@@ -174,8 +181,18 @@ async function main() {
   const dbPath = path.join(dataDir, 'loans.db');
   const database = new TransactionDatabase(dbPath);
 
-  const monitor = new LoanMonitor(valrClient, config);
+  const monitor = new LoanMonitor(valrClient, config, dbPath);
   const metrics = new MetricsExporter(monitor);
+
+  // Initialize repayment monitor if enabled
+  let repaymentMonitor: RepaymentMonitor | undefined;
+  if (repaymentEnabled && repaymentConfig) {
+    const repaymentMonitorConfig: RepaymentMonitorConfig = {
+      repaymentSubaccount: repaymentConfig.repaymentSubaccount,
+    };
+    repaymentMonitor = new RepaymentMonitor(repaymentValrClient, database, repaymentMonitorConfig);
+    console.log(`Repayment monitor initialized for subaccount ${repaymentConfig.repaymentSubaccount}`);
+  }
 
   // Initialize repayment manager if enabled
   let repaymentManager: RepaymentManager | undefined;
@@ -235,6 +252,7 @@ async function main() {
     // Add repayment information if enabled
     if (repaymentManager) {
       const ffSummaries = repaymentManager.getFFLoanSummaries();
+      const sanitizedFFSummaries = sanitizeFFLoanSummaries(ffSummaries);
       const repaymentHistory = database.getRepaymentHistory(10);
       const repaymentStats = database.getRepaymentStats();
 
@@ -251,7 +269,7 @@ async function main() {
           totalPrincipal: ffSummaries.reduce((sum, s) => sum + s.loan.principal, 0),
           totalMonthlyObligation: ffSummaries.reduce((sum, s) => sum + s.monthlyInterestDue, 0),
           totalInterestPaid: ffSummaries.reduce((sum, s) => sum + s.totalInterestPaid, 0),
-          loans: ffSummaries,
+          loans: sanitizedFFSummaries,
         },
         executionHistory: repaymentHistory,
         stats: repaymentStats,
@@ -268,7 +286,7 @@ async function main() {
   app.post('/refresh', async (req, res) => {
     try {
       console.log(`[${new Date().toISOString()}] Manual refresh triggered`);
-      await updateData(monitor, metrics, dbPath, repaymentManager);
+      await updateData(monitor, metrics, dbPath, repaymentManager, repaymentMonitor);
       res.json({ status: 'success', timestamp: new Date().toISOString() });
     } catch (error) {
       console.error('Manual refresh error:', error);
@@ -284,12 +302,13 @@ async function main() {
     }
 
     const ffSummaries = repaymentManager.getFFLoanSummaries();
+    const sanitizedFFSummaries = sanitizeFFLoanSummaries(ffSummaries);
     res.json({
       enabled: true,
       dryRun: repaymentConfig?.dryRun || false,
       repaymentSubaccount: repaymentConfig?.repaymentSubaccount,
       minimumZARReserve: repaymentConfig?.minimumZARReserve,
-      friendsFamilyLoans: ffSummaries,
+      friendsFamilyLoans: sanitizedFFSummaries,
     });
   });
 
@@ -323,10 +342,10 @@ async function main() {
     }
   });
 
-  await updateData(monitor, metrics, dbPath, repaymentManager);
+  await updateData(monitor, metrics, dbPath, repaymentManager, repaymentMonitor);
 
   setInterval(() => {
-    updateData(monitor, metrics, dbPath, repaymentManager);
+    updateData(monitor, metrics, dbPath, repaymentManager, repaymentMonitor);
   }, POLL_INTERVAL_MS);
 
   process.on('SIGTERM', () => {

@@ -37,6 +37,7 @@ dist/
 
 ### Environment ###
 .env
+.env.docker
 
 ### Data ###
 data/

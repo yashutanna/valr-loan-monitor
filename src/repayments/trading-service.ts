@@ -57,14 +57,13 @@ export class TradingService {
         customerOrderId: `repay-${Date.now()}-${Math.random().toString(36).substring(7)}`
       };
 
-      const orderResponse = await (this.valrClient as any).orders.placeMarketOrder(orderRequest);
+      const orderResponse = await this.valrClient.trading.placeMarketOrder(orderRequest);
 
       // Wait a bit for order to settle
       await this.sleep(2000);
-
       // Get order status to find actual crypto received
       const orderId = (orderResponse as any).id;
-      const orderStatus = await (this.valrClient as any).orders.getOrderStatus(pair, orderId);
+      const orderStatus = await this.valrClient.trading.getOrderStatus(pair, orderId);
 
       const baseReceived = parseFloat((orderStatus as any).baseReceived || '0');
       const quoteSpent = parseFloat((orderStatus as any).quoteSpent || '0');
