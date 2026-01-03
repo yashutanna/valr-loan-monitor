@@ -46,6 +46,26 @@ export class MetricsExporter {
   private totalPaymentsGauge: Gauge;
   private totalPaymentsZARGauge: Gauge;
 
+  // Repayment gauges
+  private repaymentExecutionsTotal: Counter;
+  private repaymentSuccessTotal: Counter;
+  private repaymentFailureTotal: Counter;
+  private repaymentZARSpentTotal: Counter;
+  private repaymentActionsExecutedTotal: Counter;
+  private repaymentFFPaymentsTotal: Counter;
+  private repaymentVALRPaymentsTotal: Counter;
+  private repaymentLastExecutionTimestamp: Gauge;
+  private repaymentLastExecutionSuccess: Gauge;
+  private repaymentDryRun: Gauge;
+
+  // F&F loan gauges
+  private ffLoanCount: Gauge;
+  private ffLoanTotalPrincipal: Gauge;
+  private ffLoanMonthlyObligation: Gauge;
+  private ffLoanTotalInterestPaid: Gauge;
+  private ffLoanInterestPaidByLoan: Gauge;
+  private ffLoanDaysSinceLastPayment: Gauge;
+
   constructor(loanMonitor: LoanMonitor) {
     this.register = new Registry();
     this.loanMonitor = loanMonitor;
@@ -244,6 +264,106 @@ export class MetricsExporter {
       labelNames: ['currency'],
       registers: [this.register],
     });
+
+    // Repayment metrics
+    this.repaymentExecutionsTotal = new Counter({
+      name: 'valr_repayment_executions_total',
+      help: 'Total number of repayment cycle executions',
+      registers: [this.register],
+    });
+
+    this.repaymentSuccessTotal = new Counter({
+      name: 'valr_repayment_success_total',
+      help: 'Total number of successful repayment cycles',
+      registers: [this.register],
+    });
+
+    this.repaymentFailureTotal = new Counter({
+      name: 'valr_repayment_failure_total',
+      help: 'Total number of failed repayment cycles',
+      registers: [this.register],
+    });
+
+    this.repaymentZARSpentTotal = new Counter({
+      name: 'valr_repayment_zar_spent_total',
+      help: 'Total ZAR spent on repayments (cumulative)',
+      registers: [this.register],
+    });
+
+    this.repaymentActionsExecutedTotal = new Counter({
+      name: 'valr_repayment_actions_executed_total',
+      help: 'Total number of repayment actions executed',
+      registers: [this.register],
+    });
+
+    this.repaymentFFPaymentsTotal = new Counter({
+      name: 'valr_repayment_ff_payments_total',
+      help: 'Total number of Friends & Family payments made',
+      registers: [this.register],
+    });
+
+    this.repaymentVALRPaymentsTotal = new Counter({
+      name: 'valr_repayment_valr_payments_total',
+      help: 'Total number of VALR loan repayments made',
+      registers: [this.register],
+    });
+
+    this.repaymentLastExecutionTimestamp = new Gauge({
+      name: 'valr_repayment_last_execution_timestamp',
+      help: 'Unix timestamp of last repayment execution',
+      registers: [this.register],
+    });
+
+    this.repaymentLastExecutionSuccess = new Gauge({
+      name: 'valr_repayment_last_execution_success',
+      help: 'Success status of last repayment execution (1=success, 0=failure)',
+      registers: [this.register],
+    });
+
+    this.repaymentDryRun = new Gauge({
+      name: 'valr_repayment_dry_run',
+      help: 'Whether repayment system is in dry-run mode (1=dry-run, 0=live)',
+      registers: [this.register],
+    });
+
+    // F&F loan metrics
+    this.ffLoanCount = new Gauge({
+      name: 'valr_ff_loan_count',
+      help: 'Number of active Friends & Family loans',
+      registers: [this.register],
+    });
+
+    this.ffLoanTotalPrincipal = new Gauge({
+      name: 'valr_ff_loan_total_principal',
+      help: 'Total principal amount across all F&F loans in ZAR',
+      registers: [this.register],
+    });
+
+    this.ffLoanMonthlyObligation = new Gauge({
+      name: 'valr_ff_loan_monthly_obligation',
+      help: 'Total monthly interest obligation across all F&F loans in ZAR',
+      registers: [this.register],
+    });
+
+    this.ffLoanTotalInterestPaid = new Gauge({
+      name: 'valr_ff_loan_total_interest_paid',
+      help: 'Total interest paid across all F&F loans in ZAR',
+      registers: [this.register],
+    });
+
+    this.ffLoanInterestPaidByLoan = new Gauge({
+      name: 'valr_ff_loan_interest_paid_by_loan',
+      help: 'Interest paid by individual F&F loan in ZAR',
+      labelNames: ['loan_id', 'name'],
+      registers: [this.register],
+    });
+
+    this.ffLoanDaysSinceLastPayment = new Gauge({
+      name: 'valr_ff_loan_days_since_last_payment',
+      help: 'Days since last payment for each F&F loan',
+      labelNames: ['loan_id', 'name'],
+      registers: [this.register],
+    });
   }
 
   updateMetrics(): void {
@@ -358,6 +478,50 @@ export class MetricsExporter {
     this.diskUsageByComponentGauge.reset();
     for (const [component, bytes] of Object.entries(breakdown)) {
       this.diskUsageByComponentGauge.set({ component }, bytes);
+    }
+  }
+
+  updateRepaymentMetrics(result: any, ffSummaries: any[], dryRun: boolean): void {
+    // Update execution counters
+    this.repaymentExecutionsTotal.inc();
+
+    if (result.success) {
+      this.repaymentSuccessTotal.inc();
+    } else {
+      this.repaymentFailureTotal.inc();
+    }
+
+    // Update cumulative counters
+    this.repaymentZARSpentTotal.inc(result.totalZARSpent);
+    this.repaymentActionsExecutedTotal.inc(result.actionsExecuted);
+    this.repaymentFFPaymentsTotal.inc(result.breakdown.friendsFamilyPayments);
+    this.repaymentVALRPaymentsTotal.inc(result.breakdown.valrLoanPayments);
+
+    // Update last execution status
+    this.repaymentLastExecutionTimestamp.set(new Date(result.timestamp).getTime() / 1000);
+    this.repaymentLastExecutionSuccess.set(result.success ? 1 : 0);
+    this.repaymentDryRun.set(dryRun ? 1 : 0);
+
+    // Update F&F loan metrics
+    this.ffLoanCount.set(ffSummaries.length);
+
+    const totalPrincipal = ffSummaries.reduce((sum, s) => sum + s.loan.principal, 0);
+    this.ffLoanTotalPrincipal.set(totalPrincipal);
+
+    const totalMonthlyObligation = ffSummaries.reduce((sum, s) => sum + s.monthlyInterestDue, 0);
+    this.ffLoanMonthlyObligation.set(totalMonthlyObligation);
+
+    const totalInterestPaid = ffSummaries.reduce((sum, s) => sum + s.totalInterestPaid, 0);
+    this.ffLoanTotalInterestPaid.set(totalInterestPaid);
+
+    // Update per-loan metrics
+    this.ffLoanInterestPaidByLoan.reset();
+    this.ffLoanDaysSinceLastPayment.reset();
+
+    for (const summary of ffSummaries) {
+      const labels = { loan_id: summary.loan.id, name: summary.loan.name };
+      this.ffLoanInterestPaidByLoan.set(labels, summary.totalInterestPaid);
+      this.ffLoanDaysSinceLastPayment.set(labels, summary.daysSinceLastPayment);
     }
   }
 

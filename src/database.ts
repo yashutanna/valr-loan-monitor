@@ -27,6 +27,57 @@ export class TransactionDatabase {
       CREATE INDEX IF NOT EXISTS idx_event_at ON transactions(event_at DESC);
       CREATE INDEX IF NOT EXISTS idx_transaction_type ON transactions(transaction_type);
       CREATE INDEX IF NOT EXISTS idx_debit_currency ON transactions(debit_currency);
+
+      -- Friends & Family Payments
+      CREATE TABLE IF NOT EXISTS ff_payments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        loan_id TEXT NOT NULL,
+        payment_date TEXT NOT NULL,
+        amount_zar REAL NOT NULL,
+        crypto_currency TEXT NOT NULL,
+        crypto_amount REAL NOT NULL,
+        transfer_id TEXT,
+        payment_type TEXT CHECK(payment_type IN ('INTEREST', 'PRINCIPAL')),
+        dry_run INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_ff_payments_loan ON ff_payments(loan_id);
+      CREATE INDEX IF NOT EXISTS idx_ff_payments_date ON ff_payments(payment_date DESC);
+
+      -- Repayment Execution Log
+      CREATE TABLE IF NOT EXISTS repayment_executions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        execution_date TEXT NOT NULL,
+        dry_run INTEGER NOT NULL,
+        actions_planned INTEGER NOT NULL,
+        actions_executed INTEGER NOT NULL,
+        total_zar_spent REAL NOT NULL,
+        ff_payments_count INTEGER DEFAULT 0,
+        valr_payments_count INTEGER DEFAULT 0,
+        success INTEGER NOT NULL,
+        errors TEXT,
+        execution_details TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_repayment_exec_date ON repayment_executions(execution_date DESC);
+
+      -- VALR Loan Repayments
+      CREATE TABLE IF NOT EXISTS valr_loan_repayments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        execution_id INTEGER NOT NULL,
+        currency TEXT NOT NULL,
+        amount REAL NOT NULL,
+        amount_zar REAL NOT NULL,
+        transfer_id TEXT,
+        dry_run INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (execution_id) REFERENCES repayment_executions(id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_valr_repayments_currency ON valr_loan_repayments(currency);
+      CREATE INDEX IF NOT EXISTS idx_valr_repayments_exec ON valr_loan_repayments(execution_id);
     `);
   }
 
@@ -153,6 +204,212 @@ export class TransactionDatabase {
         const transferId = tx.additionalInfo?.transferId;
         return !transferId || !ignoreTransferIds.includes(transferId);
       });
+  }
+
+  // Friends & Family Payment methods
+  recordFFPayment(payment: {
+    loanId: string;
+    paymentDate: string;
+    amountZAR: number;
+    cryptoCurrency: string;
+    cryptoAmount: number;
+    transferId?: string;
+    paymentType: 'INTEREST' | 'PRINCIPAL';
+    dryRun: boolean;
+  }): number {
+    const result = this.db.prepare(`
+      INSERT INTO ff_payments (
+        loan_id, payment_date, amount_zar, crypto_currency,
+        crypto_amount, transfer_id, payment_type, dry_run
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      payment.loanId,
+      payment.paymentDate,
+      payment.amountZAR,
+      payment.cryptoCurrency,
+      payment.cryptoAmount,
+      payment.transferId || null,
+      payment.paymentType,
+      payment.dryRun ? 1 : 0
+    );
+    return result.lastInsertRowid as number;
+  }
+
+  getFFPaymentHistory(loanId: string, limit?: number): any[] {
+    const query = limit
+      ? `SELECT * FROM ff_payments WHERE loan_id = ? ORDER BY payment_date DESC LIMIT ?`
+      : `SELECT * FROM ff_payments WHERE loan_id = ? ORDER BY payment_date DESC`;
+
+    const params = limit ? [loanId, limit] : [loanId];
+    return this.db.prepare(query).all(...params) as any[];
+  }
+
+  getFFPaymentsThisMonth(loanId: string): any[] {
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+
+    return this.db.prepare(`
+      SELECT * FROM ff_payments
+      WHERE loan_id = ? AND payment_date >= ?
+      ORDER BY payment_date DESC
+    `).all(loanId, monthStart) as any[];
+  }
+
+  getFFTotalInterestPaid(loanId: string): number {
+    const result = this.db.prepare(`
+      SELECT COALESCE(SUM(amount_zar), 0) as total
+      FROM ff_payments
+      WHERE loan_id = ? AND payment_type = 'INTEREST' AND dry_run = 0
+    `).get(loanId) as { total: number };
+    return result.total;
+  }
+
+  getFFTotalPrincipalPaid(loanId: string): number {
+    const result = this.db.prepare(`
+      SELECT COALESCE(SUM(amount_zar), 0) as total
+      FROM ff_payments
+      WHERE loan_id = ? AND payment_type = 'PRINCIPAL' AND dry_run = 0
+    `).get(loanId) as { total: number };
+    return result.total;
+  }
+
+  getFFLastPaymentDate(loanId: string): string | null {
+    const result = this.db.prepare(`
+      SELECT payment_date
+      FROM ff_payments
+      WHERE loan_id = ? AND dry_run = 0
+      ORDER BY payment_date DESC
+      LIMIT 1
+    `).get(loanId) as { payment_date: string } | undefined;
+    return result?.payment_date || null;
+  }
+
+  // Repayment Execution methods
+  recordRepaymentExecution(execution: {
+    executionDate: string;
+    dryRun: boolean;
+    actionsPlanned: number;
+    actionsExecuted: number;
+    totalZARSpent: number;
+    ffPaymentsCount: number;
+    valrPaymentsCount: number;
+    success: boolean;
+    errors: string[];
+    executionDetails: any;
+  }): number {
+    const result = this.db.prepare(`
+      INSERT INTO repayment_executions (
+        execution_date, dry_run, actions_planned, actions_executed,
+        total_zar_spent, ff_payments_count, valr_payments_count,
+        success, errors, execution_details
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      execution.executionDate,
+      execution.dryRun ? 1 : 0,
+      execution.actionsPlanned,
+      execution.actionsExecuted,
+      execution.totalZARSpent,
+      execution.ffPaymentsCount,
+      execution.valrPaymentsCount,
+      execution.success ? 1 : 0,
+      JSON.stringify(execution.errors),
+      JSON.stringify(execution.executionDetails)
+    );
+    return result.lastInsertRowid as number;
+  }
+
+  getRepaymentHistory(limit: number = 10): any[] {
+    return this.db.prepare(`
+      SELECT * FROM repayment_executions
+      ORDER BY execution_date DESC
+      LIMIT ?
+    `).all(limit) as any[];
+  }
+
+  getRepaymentStats(): {
+    totalExecutions: number;
+    successCount: number;
+    failureCount: number;
+    totalZARSpent: number;
+    successRate: number;
+  } {
+    const result = this.db.prepare(`
+      SELECT
+        COUNT(*) as total_executions,
+        SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as success_count,
+        SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as failure_count,
+        COALESCE(SUM(CASE WHEN dry_run = 0 THEN total_zar_spent ELSE 0 END), 0) as total_zar_spent
+      FROM repayment_executions
+    `).get() as any;
+
+    return {
+      totalExecutions: result.total_executions || 0,
+      successCount: result.success_count || 0,
+      failureCount: result.failure_count || 0,
+      totalZARSpent: result.total_zar_spent || 0,
+      successRate: result.total_executions > 0
+        ? (result.success_count / result.total_executions) * 100
+        : 0
+    };
+  }
+
+  // VALR Loan Repayment methods
+  recordVALRRepayment(repayment: {
+    executionId: number;
+    currency: string;
+    amount: number;
+    amountZAR: number;
+    transferId?: string;
+    dryRun: boolean;
+  }): number {
+    const result = this.db.prepare(`
+      INSERT INTO valr_loan_repayments (
+        execution_id, currency, amount, amount_zar, transfer_id, dry_run
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      repayment.executionId,
+      repayment.currency,
+      repayment.amount,
+      repayment.amountZAR,
+      repayment.transferId || null,
+      repayment.dryRun ? 1 : 0
+    );
+    return result.lastInsertRowid as number;
+  }
+
+  getVALRRepaymentsForExecution(executionId: number): any[] {
+    return this.db.prepare(`
+      SELECT * FROM valr_loan_repayments
+      WHERE execution_id = ?
+      ORDER BY created_at ASC
+    `).all(executionId) as any[];
+  }
+
+  getVALRRepaymentsByCurrency(currency: string, limit?: number): any[] {
+    const query = limit
+      ? `SELECT * FROM valr_loan_repayments WHERE currency = ? AND dry_run = 0 ORDER BY created_at DESC LIMIT ?`
+      : `SELECT * FROM valr_loan_repayments WHERE currency = ? AND dry_run = 0 ORDER BY created_at DESC`;
+
+    const params = limit ? [currency, limit] : [currency];
+    return this.db.prepare(query).all(...params) as any[];
+  }
+
+  getTotalVALRRepayments(currency?: string): number {
+    if (currency) {
+      const result = this.db.prepare(`
+        SELECT COALESCE(SUM(amount), 0) as total
+        FROM valr_loan_repayments
+        WHERE currency = ? AND dry_run = 0
+      `).get(currency) as { total: number };
+      return result.total;
+    } else {
+      const result = this.db.prepare(`
+        SELECT COALESCE(SUM(amount_zar), 0) as total
+        FROM valr_loan_repayments
+        WHERE dry_run = 0
+      `).get() as { total: number };
+      return result.total;
+    }
   }
 
   close(): void {

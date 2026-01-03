@@ -97,7 +97,7 @@ export class LoanMonitor {
 
   private async getAccountStanding(): Promise<void> {
     try {
-      const marginStatus = await this.valrClient.margin.getMarginStatus() as any;
+      const marginStatus = await (this.valrClient as any).margin.getMarginStatus();
 
       this.metrics.accountStanding = {
         marginFraction: parseFloat(marginStatus.marginFraction),

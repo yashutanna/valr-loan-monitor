@@ -34,7 +34,7 @@
     "express": "5.2.1",
     "dotenv": "16.4.7",
     "better-sqlite3": "11.8.1",
-    "valr-typescript-client": "1.0.8"
+    "valr-typescript-client": "1.0.22"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",

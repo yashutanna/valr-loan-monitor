@@ -42,6 +42,9 @@ dist/
 data/
 *.db
 
+### Config ###
+config/friends-family-loans.json
+
 ### Docker Volumes ###
 volumes/
 

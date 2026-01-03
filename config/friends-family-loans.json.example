@@ -1,0 +1,50 @@
+{
+  "version": "1.0",
+  "loans": [
+    {
+      "id": "example-loan-1",
+      "name": "John Doe",
+      "principal": 10000.00,
+      "currency": "ZAR",
+      "recipient": {
+        "type": "valrAccountId",
+        "value": "1234567890123456789"
+      },
+      "interestRate": 0.07,
+      "startDate": "2024-12-01T00:00:00Z",
+      "cryptoPreference": "USDC",
+      "active": false,
+      "notes": "Example loan - 7% annual interest, monthly payments in USDC. Recipient via VALR account ID."
+    },
+    {
+      "id": "example-loan-2",
+      "name": "Jane Smith",
+      "principal": 5000.00,
+      "currency": "ZAR",
+      "recipient": {
+        "type": "email",
+        "value": "jane.smith@example.com"
+      },
+      "interestRate": 0.07,
+      "startDate": "2024-12-15T00:00:00Z",
+      "cryptoPreference": "BTC",
+      "active": false,
+      "notes": "Example loan - 7% annual interest, monthly payments in BTC. Recipient via email."
+    },
+    {
+      "id": "example-loan-3",
+      "name": "Bob Johnson",
+      "principal": 7500.00,
+      "currency": "ZAR",
+      "recipient": {
+        "type": "cellNumber",
+        "value": "+27821234567"
+      },
+      "interestRate": 0.07,
+      "startDate": "2025-01-01T00:00:00Z",
+      "cryptoPreference": "USDC",
+      "active": false,
+      "notes": "Example loan - 7% annual interest, monthly payments in USDC. Recipient via cell number."
+    }
+  ]
+}
